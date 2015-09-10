@@ -36,6 +36,72 @@
 pcap_t *handle; /* pcap file handler */
 
 /******************************************************************************
+ * Function prototypes
+ */
+static inline void print_usage   (char *app_name);
+static        void signal_handler(int signum);
+static inline void process_packet(struct pcap_pkthdr *hdr, const u_char *pkt);
+static inline void print_packet  (struct pcap_pkthdr *hdr, const u_char *pkt);
+static inline struct iphdr   * get_ipv4_hdr(const u_char *pkt);
+static inline struct ipv6hdr * get_ipv6_hdr(const u_char *pkt);
+static inline struct tcphdr  * get_tcp_hdr (const u_char *pkt);
+static inline struct udphdr  * get_udp_hdr (const u_char *pkt);
+
+/******************************************************************************
+ * main
+ * - Open a pcap file and read packets in it to process each of them.
+ */
+int
+main(int argc, char *argv[])
+{
+  char errbuf[PCAP_ERRBUF_SIZE];
+  struct pcap_pkthdr hdr;
+  const u_char *pkt;
+
+  /* check the input arguments */
+  if (argc != 2) {
+    print_usage(argv[0]);
+    return 0;
+  }
+
+  /* set interrupt handler */
+  if (signal(SIGINT, signal_handler) == SIG_ERR) {
+    perror("signal");
+    return 0;
+  }
+
+  /* open the pcap file */
+  handle = pcap_open_offline(argv[1], errbuf);
+  if (handle == NULL) {
+    fprintf(stderr, "pcap_open_offline: %s", errbuf);
+    return 0;
+  }
+
+  /* read packets from the pcap file */
+  while ((pkt = pcap_next(handle, &hdr))) {
+    if (hdr.ts.tv_sec == 0)
+      break;
+
+    process_packet(&hdr, pkt);
+  }
+
+  /* close the pcap file */
+  pcap_close(handle);
+
+  return 0;
+}
+
+/******************************************************************************
+ * print_usage
+ * - Print out usage command.
+ */
+static inline void
+print_usage(char *app_name)
+{
+  fprintf(stderr, "Usage: %s [PCAP_FILE]\n", app_name);
+}
+
+/******************************************************************************
  * signal_handler
  * - An interrupt handler that closes the pcap file and terminates the process.
  */
@@ -50,93 +116,19 @@ signal_handler(int signum)
 }
 
 /******************************************************************************
- * print_usage
- * - Print out usage command.
+ * process_packet
+ * - Process a packet
+ *   * Print packet data
+ *   * TCP/UDP flow tracking
+ *   * Counting the total number of packets/bytes/flows 
+ *   * Counting the number of concurrent flows
+ *   * Check the flow sizes, durations, and inter-arrival time
+ *   * etc.
  */
 static inline void
-print_usage(char *app_name)
+process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 {
-  fprintf(stderr, "Usage: %s [PCAP_FILE]\n", app_name);
-}
-
-/******************************************************************************
- * get_ipv4_hdr
- * - Return the address of IPv4 header in the raw Ethernet frame bytestream.
- */
-static inline struct iphdr *
-get_ipv4_hdr(const u_char *pkt)
-{
-  /*
-  if (unlikely(ntohs(((struct ethhdr *)pkt)->h_proto) == ETH_P_8021Q))
-    return (struct iphdr *)(pkt + sizeof(struct ethhdr) +
-			    sizeof(struct vlan_hdr));
-  else
-  */
-  return (struct iphdr *)(pkt + sizeof(struct ethhdr));
-}
-
-/******************************************************************************
- * get_ipv6_hdr
- * - Return the address of IPv6 header in the raw Ethernet frame bytestream.
- */
-static inline struct ipv6hdr *
-get_ipv6_hdr(const u_char *pkt)
-{
-  /*
-  if (unlikely(ntohs(((struct ethhdr *)pkt)->h_proto) == ETH_P_8021Q))
-    return (struct ipv6hdr *)(pkt + sizeof(struct ethhdr) +
-			    sizeof(struct vlan_hdr));
-  else
-  */
-  return (struct ipv6hdr *)(pkt + sizeof(struct ethhdr));
-}
-
-/******************************************************************************
- * get_tcp_hdr
- * - Return the address of TCP header in the raw Ethernet frame bytestream.
- */
-static inline struct tcphdr *
-get_tcp_hdr(const u_char *pkt)
-{
-  struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
-  uint16_t ether_type = ntohs(ether_hdr->h_proto);
-  
-  if (ether_type == ETH_P_IP) {
-    struct iphdr *ip_hdr = get_ipv4_hdr(pkt);
-    return (struct tcphdr *)(pkt + sizeof(struct ethhdr)
-			     + (ip_hdr->ihl << 2));
-  }
-  else if (ether_type == ETH_P_IPV6) {
-    return (struct tcphdr *)(pkt + sizeof(struct ethhdr)
-			     + sizeof(struct ipv6hdr));
-  }
-  else {
-    return NULL;
-  }
-}
-
-/******************************************************************************
- * get_udp_hdr
- * - Return the address of UDP header in the raw Ethernet frame bytestream.
- */
-static inline struct udphdr *
-get_udp_hdr(const u_char *pkt)
-{
-  struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
-  uint16_t ether_type = ntohs(ether_hdr->h_proto);
-
-  if (ether_type == ETH_P_IP) {
-    struct iphdr *ip_hdr = get_ipv4_hdr(pkt);
-    return (struct udphdr *)(pkt + sizeof(struct ethhdr)
-			     + (ip_hdr->ihl << 2));
-  }
-  else if (ether_type == ETH_P_IPV6) {
-    return (struct udphdr *)(pkt + sizeof(struct ethhdr)
-			     + sizeof(struct ipv6hdr));
-  }
-  else {
-    return NULL;
-  }
+  print_packet(hdr, pkt);
 }
 
 /******************************************************************************
@@ -238,61 +230,82 @@ print_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 }
 
 /******************************************************************************
- * process_packet
- * - Process a packet
- *   * Print packet data
- *   * TCP/UDP flow tracking
- *   * Counting the total number of packets/bytes/flows 
- *   * Counting the number of concurrent flows
- *   * Check the flow sizes, durations, and inter-arrival time
- *   * etc.
+ * get_ipv4_hdr
+ * - Return the address of IPv4 header in the raw Ethernet frame bytestream.
  */
-static inline void
-process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
+static inline struct iphdr *
+get_ipv4_hdr(const u_char *pkt)
 {
-  print_packet(hdr, pkt);
+  /*
+  if (unlikely(ntohs(((struct ethhdr *)pkt)->h_proto) == ETH_P_8021Q))
+    return (struct iphdr *)(pkt + sizeof(struct ethhdr) +
+			    sizeof(struct vlan_hdr));
+  else
+  */
+  return (struct iphdr *)(pkt + sizeof(struct ethhdr));
 }
 
 /******************************************************************************
- * main
- * - Open a pcap file and read packets in it to process each of them.
+ * get_ipv6_hdr
+ * - Return the address of IPv6 header in the raw Ethernet frame bytestream.
  */
-int
-main(int argc, char *argv[])
+static inline struct ipv6hdr *
+get_ipv6_hdr(const u_char *pkt)
 {
-  char errbuf[PCAP_ERRBUF_SIZE];
-  struct pcap_pkthdr hdr;
-  const u_char *pkt;
-
-  /* check the input arguments */
-  if (argc != 2) {
-    print_usage(argv[0]);
-    return 0;
-  }
-
-  /* set interrupt handler */
-  if (signal(SIGINT, signal_handler) == SIG_ERR) {
-    perror("signal");
-    return 0;
-  }
-
-  /* open the pcap file */
-  handle = pcap_open_offline(argv[1], errbuf);
-  if (handle == NULL) {
-    fprintf(stderr, "pcap_open_offline: %s", errbuf);
-    return 0;
-  }
-
-  /* read packets from the pcap file */
-  while ((pkt = pcap_next(handle, &hdr))) {
-    if (hdr.ts.tv_sec == 0)
-      break;
-
-    process_packet(&hdr, pkt);
-  }
-
-  /* close the pcap file */
-  pcap_close(handle);
-
-  return 0;
+  /*
+  if (unlikely(ntohs(((struct ethhdr *)pkt)->h_proto) == ETH_P_8021Q))
+    return (struct ipv6hdr *)(pkt + sizeof(struct ethhdr) +
+			    sizeof(struct vlan_hdr));
+  else
+  */
+  return (struct ipv6hdr *)(pkt + sizeof(struct ethhdr));
 }
+
+/******************************************************************************
+ * get_tcp_hdr
+ * - Return the address of TCP header in the raw Ethernet frame bytestream.
+ */
+static inline struct tcphdr *
+get_tcp_hdr(const u_char *pkt)
+{
+  struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
+  uint16_t ether_type = ntohs(ether_hdr->h_proto);
+  
+  if (ether_type == ETH_P_IP) {
+    struct iphdr *ip_hdr = get_ipv4_hdr(pkt);
+    return (struct tcphdr *)(pkt + sizeof(struct ethhdr)
+			     + (ip_hdr->ihl << 2));
+  }
+  else if (ether_type == ETH_P_IPV6) {
+    return (struct tcphdr *)(pkt + sizeof(struct ethhdr)
+			     + sizeof(struct ipv6hdr));
+  }
+  else {
+    return NULL;
+  }
+}
+
+/******************************************************************************
+ * get_udp_hdr
+ * - Return the address of UDP header in the raw Ethernet frame bytestream.
+ */
+static inline struct udphdr *
+get_udp_hdr(const u_char *pkt)
+{
+  struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
+  uint16_t ether_type = ntohs(ether_hdr->h_proto);
+
+  if (ether_type == ETH_P_IP) {
+    struct iphdr *ip_hdr = get_ipv4_hdr(pkt);
+    return (struct udphdr *)(pkt + sizeof(struct ethhdr)
+			     + (ip_hdr->ihl << 2));
+  }
+  else if (ether_type == ETH_P_IPV6) {
+    return (struct udphdr *)(pkt + sizeof(struct ethhdr)
+			     + sizeof(struct ipv6hdr));
+  }
+  else {
+    return NULL;
+  }
+}
+
