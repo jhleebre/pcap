@@ -1,0 +1,46 @@
+mk_part.sh
+
+ Make a partition at each disk.
+ You may need to run this only with the new disks which have no partition yet.
+ You can check whether a disk has its partition or not at /dev/ directory.
+ For example, if you can find both /dev/sda and /dev/sda1, the disk /dev/sda has its own partition /dev/sda1, and you don't need to make a partition for the disk.
+
+mk_fs.sh
+
+ Make a file system at each disk.
+ You may need to run this whenever you want to format the existing disks.
+ Please check the disk name carefully not to format the main file system.
+ Use df to check the name of the main file system.
+
+mk_dir.sh
+
+ Make work_* and meta_* under /mnt/ for later file system mounting.
+
+mk_files.sh
+
+ Make 1 GB files to each disk to pre-allocate disk blocks.
+
+mount.sh
+
+ Mount file systems to /mnt/work_* and /mnt/meta_*.
+
+unmnt.sh
+
+ Unmount file systems mounted to /mnt/work_* and /mnt/meta_*.
+
+clear.sh
+
+ Simply remove every file in /mnt/work_* and /mnt/meta_* by using rm command.
+
+#####################################################################
+
+Example
+
+1. Install new hard disks (no partitions) and mount them.
+
+ mk_part.sh > mk_fs > mk_dir.sh > mount.sh > df
+
+2. Format used hard disks to clean up every data.
+ 
+ unmnt.sh > mk_fs.sh > mount.sh > df
+
