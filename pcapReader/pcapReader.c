@@ -31,9 +31,38 @@
 #include <signal.h>
 
 /******************************************************************************
+ * Configurations
+ */
+#define FLOW_TABLE_SIZE 1048576
+
+/******************************************************************************
+ * ADT definitions
+ */
+enum {START, END};
+
+enum FLOW_STATE {CLOSE, SYN, SYNACK, ESTABLISHED, FIN1, FIN2, RST};
+
+struct flow {
+  __u32 saddr;
+  __u32 daddr;
+  __u16 sport;
+  __u16 dport;
+  struct timeval ts[2];
+  enum FLOW_STATE state;
+  uint64_t num_byte;
+  uint64_t num_pkt;
+};
+
+/******************************************************************************
  * Global variables
  */
-pcap_t *handle; /* pcap file handler */
+pcap_t *handle;            /* pcap file handler */
+uint64_t num_pkt      = 0; /* the number of packets */
+uint64_t num_byte     = 0; /* the total bytes of packets */
+uint64_t num_flow     = 0; /* the total number of flows */
+uint64_t cur_flow     = 0; /* the number of concurrent flows */
+uint64_t cur_flow_max = 0; /* the maximum number of concurrent flows */
+struct flow *flowtable[FLOW_TABLE_SIZE]; /* flow table */
 
 /******************************************************************************
  * Function prototypes
