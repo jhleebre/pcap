@@ -30,39 +30,24 @@
 #include <sys/time.h>
 #include <signal.h>
 
-/******************************************************************************
- * Configurations
- */
-#define FLOW_TABLE_SIZE 1048576
-
-/******************************************************************************
- * ADT definitions
- */
-enum {START, END};
-
-enum FLOW_STATE {CLOSE, SYN, SYNACK, ESTABLISHED, FIN1, FIN2, RST};
-
-struct flow {
-  __u32 saddr;
-  __u32 daddr;
-  __u16 sport;
-  __u16 dport;
-  struct timeval ts[2];
-  enum FLOW_STATE state;
-  uint64_t num_byte;
-  uint64_t num_pkt;
-};
+#include "pcapReader.h"
+#include "flowManager.h"
+#include "config.h"
 
 /******************************************************************************
  * Global variables
  */
-pcap_t *handle;            /* pcap file handler */
+pcap_t * handle;           /* pcap file handler */
 uint64_t num_pkt      = 0; /* the number of packets */
 uint64_t num_byte     = 0; /* the total bytes of packets */
 uint64_t num_flow     = 0; /* the total number of flows */
 uint64_t cur_flow     = 0; /* the number of concurrent flows */
 uint64_t cur_flow_max = 0; /* the maximum number of concurrent flows */
-struct flow *flowtable[FLOW_TABLE_SIZE]; /* flow table */
+struct flow *flowtable[FLOW_TABLE_SIZE] = {NULL}; /* flow table */
+
+/******************************************************************************
+ * Static variables
+ */
 
 /******************************************************************************
  * Function prototypes
@@ -71,10 +56,6 @@ static inline void print_usage   (char *app_name);
 static        void signal_handler(int signum);
 static inline void process_packet(struct pcap_pkthdr *hdr, const u_char *pkt);
 static inline void print_packet  (struct pcap_pkthdr *hdr, const u_char *pkt);
-static inline struct iphdr   * get_ipv4_hdr(const u_char *pkt);
-static inline struct ipv6hdr * get_ipv6_hdr(const u_char *pkt);
-static inline struct tcphdr  * get_tcp_hdr (const u_char *pkt);
-static inline struct udphdr  * get_udp_hdr (const u_char *pkt);
 
 /******************************************************************************
  * main
@@ -262,7 +243,7 @@ print_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
  * get_ipv4_hdr
  * - Return the address of IPv4 header in the raw Ethernet frame bytestream.
  */
-static inline struct iphdr *
+inline struct iphdr *
 get_ipv4_hdr(const u_char *pkt)
 {
   /*
@@ -278,7 +259,7 @@ get_ipv4_hdr(const u_char *pkt)
  * get_ipv6_hdr
  * - Return the address of IPv6 header in the raw Ethernet frame bytestream.
  */
-static inline struct ipv6hdr *
+inline struct ipv6hdr *
 get_ipv6_hdr(const u_char *pkt)
 {
   /*
@@ -294,7 +275,7 @@ get_ipv6_hdr(const u_char *pkt)
  * get_tcp_hdr
  * - Return the address of TCP header in the raw Ethernet frame bytestream.
  */
-static inline struct tcphdr *
+inline struct tcphdr *
 get_tcp_hdr(const u_char *pkt)
 {
   struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
@@ -318,7 +299,7 @@ get_tcp_hdr(const u_char *pkt)
  * get_udp_hdr
  * - Return the address of UDP header in the raw Ethernet frame bytestream.
  */
-static inline struct udphdr *
+inline struct udphdr *
 get_udp_hdr(const u_char *pkt)
 {
   struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
