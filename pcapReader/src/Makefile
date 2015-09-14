@@ -4,7 +4,7 @@ GCC = gcc
 GCC_OPT = -m64 -Wall -O3
 
 TARGET = pcapReader
-OBJS = pcapReader.o
+OBJS = pcapReader.o flowManager.o
 LIBS = -lpcap
 INC = -I../include
 
