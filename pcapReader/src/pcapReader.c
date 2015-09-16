@@ -37,9 +37,22 @@
 #include "flowManager.h"
 
 /******************************************************************************
+ * Configurations
+ */
+#define TOP_N 10
+
+/******************************************************************************
+ * Abstract data type
+ */
+struct port_rank {
+  uint16_t port;
+  uint64_t cnt;
+};
+
+/******************************************************************************
  * Static variables
  */
-static pcap_t * handle;            /* pcap file handler */
+static pcap_t * handle;                 /* pcap file handler */
 static uint64_t num_pkt            = 0; /* the number of packets */
 static uint64_t num_byte           = 0; /* the total bytes of packets */
 static uint64_t num_ipv4_pkt       = 0; /* the number of IPv4 packets */
@@ -59,10 +72,11 @@ static uint64_t num_synack_pkt     = 0; /* the number of TCP SYN-ACK packets */
 static uint64_t num_fin_pkt        = 0; /* the number of TCP FIN packets */
 static uint64_t num_rst_pkt        = 0; /* the number of TCP RST packets */
 static uint64_t num_flow           = 0; /* the total number of flows */
-static uint64_t sportPktCnt[65536] = {0}; /* source port packet counter */
-static uint64_t dportPktCnt[65536] = {0}; /* destination port packet counter */
-static uint64_t sportByteCnt[65536]= {0}; /* source port byte counter */
-static uint64_t dportByteCnt[65536]= {0}; /* destination port byte counter */
+/* the number & amount of packets for each source/destination port */
+static uint64_t sportPktCnt[65536] = {0};
+static uint64_t dportPktCnt[65536] = {0};
+static uint64_t sportByteCnt[65536]= {0};
+static uint64_t dportByteCnt[65536]= {0};
 static flowTable_t flowTable;		  /* the flow table */
 static struct timeval ts[2] = {{0, 0}, {0, 0}};	/* arrival times of the first
 						   and the last packets */
@@ -77,7 +91,10 @@ static        void signal_handler(int signum);
 static inline int  process_packet(struct pcap_pkthdr *hdr, const u_char *pkt);
 static inline void print_packet  (struct pcap_pkthdr *hdr, const u_char *pkt);
 static inline void pkt_count     (const u_char *pkt, uint32_t len);
+static inline void update_port_count(uint16_t sport, uint16_t dport,
+				     uint32_t len);
 static inline void check_flows   (void);
+static inline void print_top_n_ports(void);
 
 /******************************************************************************
  * main
@@ -89,9 +106,10 @@ main(int argc, char *argv[])
   char errbuf[PCAP_ERRBUF_SIZE];
   struct pcap_pkthdr hdr;
   const u_char *pkt;
+  int i;
 
   /* check the input arguments */
-  if (argc != 2) {
+  if (argc < 2) {
     print_usage(argv[0]);
     return 0;
   }
@@ -99,13 +117,6 @@ main(int argc, char *argv[])
   /* set interrupt handler */
   if (signal(SIGINT, signal_handler) == SIG_ERR) {
     perror("signal");
-    return 0;
-  }
-
-  /* open the pcap file */
-  handle = pcap_open_offline(argv[1], errbuf);
-  if (handle == NULL) {
-    fprintf(stderr, "pcap_open_offline: %s", errbuf);
     return 0;
   }
 
@@ -117,58 +128,151 @@ main(int argc, char *argv[])
     return 0;
   }
 
-  printf("pcap file    : %s\n", argv[1]);
-
-  /* read packets from the pcap file */
-  while ((pkt = pcap_next(handle, &hdr))) {
-    if (hdr.ts.tv_sec == 0)
-      break;
-    if (ts[0].tv_sec == 0)
-      ts[0] = hdr.ts;
-    ts[1] = hdr.ts;
-
-    if (process_packet(&hdr, pkt) == -1) {
-      fprintf(stderr, "process_packet failure\n");
-      break;
+  for (i = 1; i < argc; i++) {
+    /* open the pcap file */
+    handle = pcap_open_offline(argv[i], errbuf);
+    if (handle == NULL) {
+      fprintf(stderr, "pcap_open_offline: %s", errbuf);
+      return 0;
     }
+    
+    printf("pcap file    : %s\n", argv[1]);
+    
+    /* read packets from the pcap file */
+    while ((pkt = pcap_next(handle, &hdr))) {
+      if (hdr.ts.tv_sec == 0)
+	break;
+      if (ts[0].tv_sec == 0)
+	ts[0] = hdr.ts;
+      ts[1] = hdr.ts;
+      
+      if (process_packet(&hdr, pkt) == -1) {
+	fprintf(stderr, "process_packet failure\n");
+	break;
+      }
+    }
+    
+    /* close the pcap file */
+    pcap_close(handle);
   }
 
-  /* close the pcap file */
-  pcap_close(handle);
   handle = NULL;
 
-  printf("total packets: %"PRIu64"\n", num_pkt);
-  printf("total bytes  : %"PRIu64"\n", num_byte);
-  printf("IPv4  packets: %"PRIu64"\n", num_ipv4_pkt);
-  printf("IPv4  bytes  : %"PRIu64"\n", num_ipv4_byte);
-  printf("IPv6  packets: %"PRIu64"\n", num_ipv6_pkt);
-  printf("IPv6  bytes  : %"PRIu64"\n", num_ipv6_byte);
-  printf("TCP   packets: %"PRIu64"\n", num_tcp_pkt);
-  printf("TCP   bytes  : %"PRIu64"\n", num_tcp_byte);
-  printf("- SYN packets: %"PRIu64"\n", num_syn_pkt);
-  printf("- S-A packets: %"PRIu64"\n", num_synack_pkt);
-  printf("- FIN packets: %"PRIu64"\n", num_fin_pkt);
-  printf("- RST packets: %"PRIu64"\n", num_rst_pkt);
-  printf("UDP   packets: %"PRIu64"\n", num_udp_pkt);
-  printf("UDP   bytes  : %"PRIu64"\n", num_udp_byte);
-  printf("ICMP  packets: %"PRIu64"\n", num_icmp_pkt);
-  printf("ICMP  bytes  : %"PRIu64"\n", num_icmp_byte);
-  printf("other packets: %"PRIu64"\n", num_oth_pkt);
-  printf("other bytes  : %"PRIu64"\n", num_oth_byte);
+  printf("----------------------------------------------------------------\n");
+  printf("total packets: %12"PRIu64"\n", num_pkt);
+  printf("total bytes  : %12"PRIu64"\n", num_byte);
+  printf("----------------------------------------------------------------\n");
+  printf("IPv4  packets: %12"PRIu64"\n", num_ipv4_pkt);
+  printf("IPv4  bytes  : %12"PRIu64"\n", num_ipv4_byte);
+  printf("IPv6  packets: %12"PRIu64"\n", num_ipv6_pkt);
+  printf("IPv6  bytes  : %12"PRIu64"\n", num_ipv6_byte);
+  printf("----------------------------------------------------------------\n");
+  printf("TCP   packets: %12"PRIu64"\n", num_tcp_pkt);
+  printf("TCP   bytes  : %12"PRIu64"\n", num_tcp_byte);
+  printf("- SYN packets: %12"PRIu64"\n", num_syn_pkt);
+  printf("- S-A packets: %12"PRIu64"\n", num_synack_pkt);
+  printf("- FIN packets: %12"PRIu64"\n", num_fin_pkt);
+  printf("- RST packets: %12"PRIu64"\n", num_rst_pkt);
+  printf("UDP   packets: %12"PRIu64"\n", num_udp_pkt);
+  printf("UDP   bytes  : %12"PRIu64"\n", num_udp_byte);
+  printf("ICMP  packets: %12"PRIu64"\n", num_icmp_pkt);
+  printf("ICMP  bytes  : %12"PRIu64"\n", num_icmp_byte);
+  printf("other packets: %12"PRIu64"\n", num_oth_pkt);
+  printf("other bytes  : %12"PRIu64"\n", num_oth_byte);
+  printf("----------------------------------------------------------------\n");
+
   //printf("## a flow is a 5-tuple fair regardless of the direction in this program\n");
-  printf("total flows  : %"PRIu64"\n", num_flow);
+  printf("total flows  : %12"PRIu64"\n", num_flow);
 
   /* check concurrent flows */
   check_flows();
 
-  double syn2syn = ((syn_arr_ts[1].tv_sec + syn_arr_ts[1].tv_usec*1e-6) -
-		    (syn_arr_ts[0].tv_sec + syn_arr_ts[0].tv_usec*1e-6));
-  printf("Avg SYN IAT  : %f sec\n", syn2syn / num_syn_pkt);
+  uint64_t syn2syn = ((syn_arr_ts[1].tv_sec*1000000 + syn_arr_ts[1].tv_usec) -
+		      (syn_arr_ts[0].tv_sec*1000000 + syn_arr_ts[0].tv_usec));
+  printf("Avg SYN IAT  : %12"PRIu64" usec\n", syn2syn / num_syn_pkt);
+
+  print_top_n_ports();
+  printf("----------------------------------------------------------------\n");
 
   /* destroy flow table */
   flowTable_destroy(flowTable);
 
   return 0;
+}
+
+/******************************************************************************
+ * compare_port
+ * - compare function for qsort
+ */
+int
+compare_port(const void *arg1, const void *arg2)
+{
+  uint64_t v1 = ((struct port_rank *)arg1)->cnt;
+  uint64_t v2 = ((struct port_rank *)arg2)->cnt;
+
+  if (v1 > v2)
+    return -1;
+  else if (v1 == v2)
+    return 0;
+  else
+    return 1;
+}
+
+/******************************************************************************
+ * print_top_n_ports
+ */
+static inline void
+print_top_n_ports(void)
+{
+  struct port_rank sport_pkt[TOP_N + 1]  = {{0,0}};
+  struct port_rank dport_pkt[TOP_N + 1]  = {{0,0}};
+  struct port_rank sport_byte[TOP_N + 1] = {{0,0}};
+  struct port_rank dport_byte[TOP_N + 1] = {{0,0}};
+  int port_id;
+  int i;
+
+  for (port_id = 0; port_id < 65536; port_id++) {
+    if (sport_pkt[TOP_N].cnt < sportPktCnt[port_id]) {
+      sport_pkt[TOP_N].port = port_id;
+      sport_pkt[TOP_N].cnt  = sportPktCnt[port_id];
+      qsort(sport_pkt, TOP_N + 1, sizeof(struct port_rank), compare_port);
+    }
+
+    if (dport_pkt[TOP_N].cnt < dportPktCnt[port_id]) {
+      dport_pkt[TOP_N].port = port_id;
+      dport_pkt[TOP_N].cnt  = dportPktCnt[port_id];
+      qsort(dport_pkt, TOP_N + 1, sizeof(struct port_rank), compare_port);
+    }
+
+    if (sport_byte[TOP_N].cnt < sportByteCnt[port_id]) {
+      sport_byte[TOP_N].port = port_id;
+      sport_byte[TOP_N].cnt  = sportByteCnt[port_id];
+      qsort(sport_byte, TOP_N + 1, sizeof(struct port_rank), compare_port);
+    }
+
+    if (dport_byte[TOP_N].cnt < dportByteCnt[port_id]) {
+      dport_byte[TOP_N].port = port_id;
+      dport_byte[TOP_N].cnt  = dportByteCnt[port_id];
+      qsort(dport_byte, TOP_N + 1, sizeof(struct port_rank), compare_port);
+    }
+  }
+
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < TOP_N; i++)
+    printf("top %2d src port in # of pkts : %5"PRIu16" %12"PRIu64" pkts\n",
+	   i+1, sport_pkt[i].port, sport_pkt[i].cnt);
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < TOP_N; i++)
+    printf("top %2d dst port in # of pkts : %5"PRIu16" %12"PRIu64" pkts\n",
+	   i+1, dport_pkt[i].port, dport_pkt[i].cnt);
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < TOP_N; i++)
+    printf("top %2d src port in # of bytes: %5"PRIu16" %12"PRIu64" bytes\n",
+	   i+1, sport_byte[i].port, sport_byte[i].cnt);
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < TOP_N; i++)
+    printf("top %2d dst port in # of bytes: %5"PRIu16" %12"PRIu64" bytes\n",
+	   i+1, dport_byte[i].port, dport_byte[i].cnt);
 }
 
 /******************************************************************************
@@ -281,14 +385,11 @@ pkt_count(const u_char *pkt, uint32_t len)
     num_oth_byte += len; 
     return;
   }
-  
+
   /* update layer 4 counter */
   if (protocol == IPPROTO_TCP) {
     struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
-    sportPktCnt[ntohs(tcp_hdr->source)]++;
-    dportPktCnt[ntohs(tcp_hdr->dest)]++;
-    sportByteCnt[ntohs(tcp_hdr->source)] += len;
-    dportByteCnt[ntohs(tcp_hdr->dest)] += len;
+    update_port_count(ntohs(tcp_hdr->source), ntohs(tcp_hdr->dest), len);
     num_tcp_pkt++;
     num_tcp_byte += len;
     
@@ -304,10 +405,7 @@ pkt_count(const u_char *pkt, uint32_t len)
   }
   else if (protocol == IPPROTO_UDP) {
     struct udphdr *udp_hdr = get_udp_hdr(pkt);
-    sportPktCnt[ntohs(udp_hdr->source)]++;
-    dportPktCnt[ntohs(udp_hdr->dest)]++;
-    sportByteCnt[ntohs(udp_hdr->source)] += len;
-    dportByteCnt[ntohs(udp_hdr->dest)] += len;
+    update_port_count(ntohs(udp_hdr->source), ntohs(udp_hdr->dest), len);
     num_udp_pkt++;
     num_udp_byte += len;
   }
@@ -320,6 +418,18 @@ pkt_count(const u_char *pkt, uint32_t len)
     num_oth_pkt++;
     num_oth_byte += len; 
   }
+}
+
+/******************************************************************************
+ * update_port_count
+ */
+static inline void
+update_port_count(uint16_t sport, uint16_t dport, uint32_t len)
+{
+  sportPktCnt[sport]++;
+  dportPktCnt[dport]++;
+  sportByteCnt[sport] += len;
+  dportByteCnt[dport] += len;
 }
 
 /******************************************************************************
@@ -434,44 +544,47 @@ check_flows(void)
   int i;
   flowQueue *fq;
   flow_t f;
+  uint64_t sum[3] = {0, 0, 0};
+  /*
   uint64_t first = (ts[0].tv_sec*1000000 + ts[0].tv_usec)/SAMPLING_PERIOD;
   uint64_t last  = (ts[1].tv_sec*1000000 + ts[1].tv_usec)/SAMPLING_PERIOD + 1;
   uint64_t conc_flow[last - first];
   uint64_t j;
-  uint64_t sum[3] = {0, 0, 0};
 
   memset(conc_flow, 0, (last - first) * sizeof(uint64_t));
+  */
 
   for (i = 0; i < FLOW_TABLE_SIZE; i++) {
     fq = &flowTable->table[i];
     TAILQ_FOREACH(f, fq, node) {
-      uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
-      uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
+	uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
+	uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
       /*
-      printf("flow size: %"PRIu64" bytes\n", f->num_byte);
-      printf("flow pkts: %"PRIu64" pkts\n", f->num_pkt);
-      printf("duration : %"PRIu64" us\n", end - start);
+	printf("flow size    : %12"PRIu64" bytes\n", f->num_byte);
+	printf("flow pkts    : %12"PRIu64" pkts\n", f->num_pkt);
+	printf("duration     : %12"PRIu64" us\n", end - start);
       */
       sum[0] += f->num_byte;
       sum[1] += f->num_pkt;
       sum[2] += end - start;
-
-      start /= SAMPLING_PERIOD;
-      end   /= SAMPLING_PERIOD;
-
-      for (j = start - first; j <= end - first; j++) {
+      /*
+	start /= SAMPLING_PERIOD;
+	end   /= SAMPLING_PERIOD;
+	
+	for (j = start - first; j <= end - first; j++) {
 	conc_flow[j]++;
-      }
+	}
+      */
     }
   }
-
+  /*
   for (j = 0; j < last - first; j++) {
-    //printf("%"PRIu64"\t%"PRIu64"\n", first + j, conc_flow[j]);
+    printf("%"PRIu64"\t%"PRIu64"\n", first + j, conc_flow[j]);
   }
-
-  printf("Avg flow size: %"PRIu64" bytes\n", sum[0]/num_flow);
-  printf("Avg flow pkts: %"PRIu64" pkts\n", sum[1]/num_flow);
-  printf("Avg duration : %f sec\n", (double)sum[2]/(double)num_flow*1e-6);
+  */
+  printf("Avg flow size: %12"PRIu64" bytes\n", sum[0]/num_flow);
+  printf("Avg flow pkts: %12"PRIu64" pkts\n", sum[1]/num_flow);
+  printf("Avg duration : %12"PRIu64" usec\n", sum[2]/num_flow);
 }
 
 /******************************************************************************
