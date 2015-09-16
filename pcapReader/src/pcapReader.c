@@ -37,11 +37,6 @@
 #include "flowManager.h"
 
 /******************************************************************************
- * Configurations
- */
-#define TOP_N 10
-
-/******************************************************************************
  * Abstract data type
  */
 struct port_rank {
@@ -78,10 +73,13 @@ static uint64_t dportPktCnt[65536] = {0};
 static uint64_t sportByteCnt[65536]= {0};
 static uint64_t dportByteCnt[65536]= {0};
 static flowTable_t flowTable;		  /* the flow table */
-static struct timeval ts[2] = {{0, 0}, {0, 0}};	/* arrival times of the first
-						   and the last packets */
 /* an array to recode SYN arriving time */
 static struct timeval syn_arr_ts[2] = {{0, 0}, {0, 0}}; 
+
+/* flow statistics maximum */
+static uint64_t num_byte_max = 0;
+static uint64_t num_pkt_max  = 0;
+static uint64_t duration_max = 0;
 
 /******************************************************************************
  * Function prototypes
@@ -142,9 +140,6 @@ main(int argc, char *argv[])
     while ((pkt = pcap_next(handle, &hdr))) {
       if (hdr.ts.tv_sec == 0)
 	break;
-      if (ts[0].tv_sec == 0)
-	ts[0] = hdr.ts;
-      ts[1] = hdr.ts;
       
       if (process_packet(&hdr, pkt) == -1) {
 	fprintf(stderr, "process_packet failure\n");
@@ -181,18 +176,18 @@ main(int argc, char *argv[])
   printf("other bytes  : %12"PRIu64"\n", num_oth_byte);
   printf("----------------------------------------------------------------\n");
 
-  //printf("## a flow is a 5-tuple fair regardless of the direction in this program\n");
-  printf("total flows  : %12"PRIu64"\n", num_flow);
-
-  /* check concurrent flows */
-  check_flows();
-
   uint64_t syn2syn = ((syn_arr_ts[1].tv_sec*1000000 + syn_arr_ts[1].tv_usec) -
 		      (syn_arr_ts[0].tv_sec*1000000 + syn_arr_ts[0].tv_usec));
   printf("Avg SYN IAT  : %12"PRIu64" usec\n", syn2syn / num_syn_pkt);
 
   print_top_n_ports();
   printf("----------------------------------------------------------------\n");
+
+  //printf("## a flow is a 5-tuple fair regardless of the direction in this program\n");
+  printf("total flows  : %12"PRIu64"\n", num_flow);
+
+  /* check concurrent flows */
+  check_flows();
 
   /* destroy flow table */
   flowTable_destroy(flowTable);
@@ -348,6 +343,18 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
   else {
     flowTable_update_flow(flowTable, f, hdr, pkt);
   }
+
+  if (f->num_byte > num_byte_max)
+    num_byte_max = f->num_byte;
+  if (f->num_pkt > num_pkt_max)
+    num_pkt_max = f->num_pkt;
+
+  uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
+  uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
+  uint64_t duration = end - start;
+
+  if (duration > duration_max)
+    duration_max = duration;
   
   return 0;
 }
@@ -541,50 +548,66 @@ print_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 static inline void
 check_flows(void)
 {
-  int i;
+  uint64_t i;
   flowQueue *fq;
   flow_t f;
   uint64_t sum[3] = {0, 0, 0};
-  /*
-  uint64_t first = (ts[0].tv_sec*1000000 + ts[0].tv_usec)/SAMPLING_PERIOD;
-  uint64_t last  = (ts[1].tv_sec*1000000 + ts[1].tv_usec)/SAMPLING_PERIOD + 1;
-  uint64_t conc_flow[last - first];
-  uint64_t j;
+  uint64_t unit_duration = duration_max / (DISTRIBUTION_DETAIL - 1);
+  uint64_t unit_num_byte = num_byte_max / (DISTRIBUTION_DETAIL - 1);
+  uint64_t unit_num_pkt  = num_pkt_max  / (DISTRIBUTION_DETAIL - 1);
+  uint64_t duration_distribution[DISTRIBUTION_DETAIL] = {0};
+  uint64_t num_byte_distribution[DISTRIBUTION_DETAIL] = {0};
+  uint64_t num_pkt_distribution[DISTRIBUTION_DETAIL]  = {0};
 
-  memset(conc_flow, 0, (last - first) * sizeof(uint64_t));
-  */
 
   for (i = 0; i < FLOW_TABLE_SIZE; i++) {
     fq = &flowTable->table[i];
     TAILQ_FOREACH(f, fq, node) {
-	uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
-	uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
+      uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
+      uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
+      uint64_t duration = end - start;
+  
       /*
 	printf("flow size    : %12"PRIu64" bytes\n", f->num_byte);
 	printf("flow pkts    : %12"PRIu64" pkts\n", f->num_pkt);
-	printf("duration     : %12"PRIu64" us\n", end - start);
+	printf("duration     : %12"PRIu64" us\n", duration);
       */
       sum[0] += f->num_byte;
       sum[1] += f->num_pkt;
-      sum[2] += end - start;
-      /*
-	start /= SAMPLING_PERIOD;
-	end   /= SAMPLING_PERIOD;
-	
-	for (j = start - first; j <= end - first; j++) {
-	conc_flow[j]++;
-	}
-      */
+      sum[2] += duration;
+      
+      num_byte_distribution[f->num_byte / unit_num_byte]++;
+      num_pkt_distribution[f->num_pkt / unit_num_pkt]++;
+      duration_distribution[duration / unit_duration]++;
     }
   }
-  /*
-  for (j = 0; j < last - first; j++) {
-    printf("%"PRIu64"\t%"PRIu64"\n", first + j, conc_flow[j]);
-  }
-  */
+
   printf("Avg flow size: %12"PRIu64" bytes\n", sum[0]/num_flow);
   printf("Avg flow pkts: %12"PRIu64" pkts\n", sum[1]/num_flow);
   printf("Avg duration : %12"PRIu64" usec\n", sum[2]/num_flow);
+
+  printf("----------------------------------------------------------------\n");
+  printf("Max flow size: %12"PRIu64" bytes\n", num_byte_max);
+  printf("Max flow pkts: %12"PRIu64" pkts\n", num_pkt_max);
+  printf("Max duration : %12"PRIu64" usec\n", duration_max);
+
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < 100; i++)
+    printf("%9"PRIu64" ~ %9"PRIu64" bytes %12"PRIu64"\n",
+	   i * unit_num_byte, (i+1) * unit_num_byte - 1,
+	   num_byte_distribution[i]);
+
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < 100; i++)
+    printf("%9"PRIu64" ~ %9"PRIu64" pkts  %12"PRIu64"\n",
+	   i * unit_num_pkt, (i + 1) * unit_num_pkt - 1,
+	   num_pkt_distribution[i]);
+
+  printf("----------------------------------------------------------------\n");
+  for (i = 0; i < 100; i++)
+    printf("%9"PRIu64" ~ %9"PRIu64" usec  %12"PRIu64"\n",
+	   i * unit_duration, (i + 1) * unit_duration - 1,
+	   duration_distribution[i]);
 }
 
 /******************************************************************************
