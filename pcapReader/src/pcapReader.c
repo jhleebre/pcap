@@ -134,6 +134,7 @@ main(int argc, char *argv[])
       return 0;
     }
     
+    fprintf(stderr, "pcap file    : %s\n", argv[i]);
     printf("pcap file    : %s\n", argv[i]);
     
     /* read packets from the pcap file */
