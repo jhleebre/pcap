@@ -343,6 +343,12 @@ signal_handler(int signum)
   if (handle != NULL)
     pcap_close(handle);
 
+#ifdef ENABLE_RAW_DATA_OUT
+  fclose(flow_len_out);
+  fclose(syn_iat_out);
+  fclose(pkt_len_out);
+#endif
+
   flowTable_destroy(flowTable);
 
   exit(0);
