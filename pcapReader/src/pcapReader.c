@@ -67,32 +67,47 @@ static uint64_t num_synack_pkt     = 0; /* the number of TCP SYN-ACK packets */
 static uint64_t num_fin_pkt        = 0; /* the number of TCP FIN packets */
 static uint64_t num_rst_pkt        = 0; /* the number of TCP RST packets */
 static uint64_t num_flow           = 0; /* the total number of flows */
+
 /* the number & amount of packets for each source/destination port */
 static uint64_t sportPktCnt[65536] = {0};
 static uint64_t dportPktCnt[65536] = {0};
 static uint64_t sportByteCnt[65536]= {0};
 static uint64_t dportByteCnt[65536]= {0};
 static flowTable_t flowTable;		  /* the flow table */
-/* an array to recode SYN arriving time */
-static struct timeval syn_arr_ts[2] = {{0, 0}, {0, 0}}; 
+
+/* timestamps to recode SYN arriving time */
+static struct timeval first_syn_ts = {0, 0};
+static struct timeval last_syn_ts = {0, 0};
+
+/* timestamps to print statistics periodically */
+static uint64_t prev_t = 0; /* previous printing timestamp */
+static uint64_t volume = 0; /* packet volume in each period */
 
 /* flow statistics maximum */
 static uint64_t num_byte_max = 0;
 static uint64_t num_pkt_max  = 0;
 static uint64_t duration_max = 0;
 
+#ifdef ENABLE_RAW_DATA_OUT
+/* output filestreams */
+static FILE *pkt_len_out; 	/* bytes of each packet */
+static FILE *syn_iat_out;	/* inter-arrival time of SYN packets */
+static FILE *flow_len_out;	/* flow duration and length in bytes */
+#endif
+
 /******************************************************************************
  * Function prototypes
  */
-static inline void print_usage   (char *app_name);
+static inline void print_usage(char *app_name);
 static        void signal_handler(int signum);
 static inline int  process_packet(struct pcap_pkthdr *hdr, const u_char *pkt);
-static inline void print_packet  (struct pcap_pkthdr *hdr, const u_char *pkt);
-static inline void pkt_count     (const u_char *pkt, uint32_t len);
+static inline void print_packet(struct pcap_pkthdr *hdr, const u_char *pkt);
+static inline void pkt_count(const u_char *pkt, uint32_t len);
 static inline void update_port_count(uint16_t sport, uint16_t dport,
 				     uint32_t len);
-static inline void check_flows   (void);
+static inline void check_flows(void);
 static inline void print_top_n_ports(void);
+static inline void print_time(FILE *stream, struct timeval t);
 
 /******************************************************************************
  * main
@@ -122,26 +137,51 @@ main(int argc, char *argv[])
   flowTable = flowTable_create();
   if (flowTable == NULL) {
     fprintf(stderr, "flowTable_create failure\n");
-    pcap_close(handle);
     return 0;
   }
+  
+#ifdef ENABLE_RAW_DATA_OUT
+  pkt_len_out = fopen("pkt_len.out", "w");
+  if (pkt_len_out == NULL) {
+    perror("fopen");
+    goto main_end1;
+  }
+  syn_iat_out = fopen("syn_iat.out", "w");
+  if (syn_iat_out == NULL) {
+    perror("fopen");
+    goto main_end2;
+  }
+  flow_len_out = fopen("flow_len.out", "w");
+  if (flow_len_out == NULL) {
+    perror("fopen");
+    goto main_end3;
+  }
+#endif
 
   for (i = 1; i < argc; i++) {
     /* open the pcap file */
     handle = pcap_open_offline(argv[i], errbuf);
     if (handle == NULL) {
       fprintf(stderr, "pcap_open_offline: %s", errbuf);
-      return 0;
+      goto main_end4;
     }
     
     fprintf(stderr, "pcap file    : %s\n", argv[i]);
-    printf("pcap file    : %s\n", argv[i]);
     
     /* read packets from the pcap file */
     while ((pkt = pcap_next(handle, &hdr))) {
       if (hdr.ts.tv_sec == 0)
 	break;
       
+      /* check timestamp and print packet volume */
+      if (hdr.ts.tv_sec - prev_t >= PRINT_PERIOD) {
+	print_time(stdout, hdr.ts);
+	printf(" %"PRIu64"\n", volume);
+	prev_t = hdr.ts.tv_sec;
+	volume = 0;
+      }
+      volume += hdr.len;
+
       if (process_packet(&hdr, pkt) == -1) {
 	fprintf(stderr, "process_packet failure\n");
 	break;
@@ -177,8 +217,8 @@ main(int argc, char *argv[])
   printf("other bytes  : %12"PRIu64"\n", num_oth_byte);
   printf("----------------------------------------------------------------\n");
 
-  uint64_t syn2syn = ((syn_arr_ts[1].tv_sec*1000000 + syn_arr_ts[1].tv_usec) -
-		      (syn_arr_ts[0].tv_sec*1000000 + syn_arr_ts[0].tv_usec));
+  uint64_t syn2syn = ((last_syn_ts.tv_sec*1000000 + last_syn_ts.tv_usec) -
+		      (first_syn_ts.tv_sec*1000000 + first_syn_ts.tv_usec));
   printf("Avg SYN IAT  : %12"PRIu64" usec\n", syn2syn / num_syn_pkt);
 
   print_top_n_ports();
@@ -190,6 +230,15 @@ main(int argc, char *argv[])
   /* check concurrent flows */
   check_flows();
 
+ main_end4:
+#ifdef ENABLE_RAW_DATA_OUT
+  fclose(flow_len_out);
+ main_end3:
+  fclose(syn_iat_out);
+ main_end2:
+  fclose(pkt_len_out);
+ main_end1:
+#endif
   /* destroy flow table */
   flowTable_destroy(flowTable);
 
@@ -317,6 +366,12 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 
   //print_packet(hdr, pkt);
 
+#ifdef ENABLE_RAW_DATA_OUT
+  /* print packet size to the file */
+  print_time(pkt_len_out, hdr->ts);
+  fprintf(pkt_len_out, " %"PRIu32"\n", hdr->len);
+#endif
+
   pkt_count(pkt, hdr->len);
 
   if (prev_num_tcp_pkt == num_tcp_pkt)
@@ -327,9 +382,19 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
    */
   struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
   if (tcp_hdr->syn == 1 && tcp_hdr->ack == 0) {
-    if (num_syn_pkt == 1)
-      syn_arr_ts[0] = hdr->ts;
-    syn_arr_ts[1] = hdr->ts;
+    if (num_syn_pkt == 1) {
+      first_syn_ts = hdr->ts;
+    }
+    else {
+#ifdef ENABLE_RAW_DATA_OUT
+      /* print syn inter-arrival time to the file */
+      uint32_t syn_iat = (hdr->ts.tv_sec * 1000000 + hdr->ts.tv_usec) - 
+	(last_syn_ts.tv_sec * 1000000 + last_syn_ts.tv_usec);
+      print_time(syn_iat_out, hdr->ts);
+      fprintf(syn_iat_out, " %"PRIu32"\n", syn_iat);
+#endif
+    }
+    last_syn_ts = hdr->ts;
   }
 
   f = flowTable_lookup(flowTable, pkt);
@@ -567,7 +632,14 @@ check_flows(void)
       uint64_t start = f->ts[0].tv_sec*1000000 + f->ts[0].tv_usec;
       uint64_t end = f->ts[1].tv_sec*1000000 + f->ts[1].tv_usec;
       uint64_t duration = end - start;
-  
+
+#ifdef ENABLE_RAW_DATA_OUT  
+      /* print flow duration and size to the file */
+      print_time(flow_len_out, f->ts[0]);
+      fprintf(flow_len_out, " ");
+      print_time(flow_len_out, f->ts[1]);
+      fprintf(flow_len_out, " %"PRIu64" %"PRIu64"\n", duration, f->num_byte);
+#endif
       /*
 	printf("flow size    : %12"PRIu64" bytes\n", f->num_byte);
 	printf("flow pkts    : %12"PRIu64" pkts\n", f->num_pkt);
@@ -592,6 +664,7 @@ check_flows(void)
   printf("Max flow pkts: %12"PRIu64" pkts\n", num_pkt_max);
   printf("Max duration : %12"PRIu64" usec\n", duration_max);
 
+  /*
   printf("----------------------------------------------------------------\n");
   for (i = 0; i < 100; i++)
     printf("%9"PRIu64" ~ %9"PRIu64" bytes %12"PRIu64"\n",
@@ -609,6 +682,7 @@ check_flows(void)
     printf("%9"PRIu64" ~ %9"PRIu64" usec  %12"PRIu64"\n",
 	   i * unit_duration, (i + 1) * unit_duration - 1,
 	   duration_distribution[i]);
+  */
 }
 
 /******************************************************************************
@@ -691,3 +765,15 @@ get_udp_hdr(const u_char *pkt)
   }
 }
 
+/******************************************************************************
+ * print_time
+ * - Print struct timeval value as HH MM SS us to the file
+ */
+static inline void 
+print_time(FILE* stream, struct timeval t)
+{
+  struct tm *tp = localtime(&t.tv_sec);
+  fprintf(stream, "%02d %02d %02d %06lu",
+	  tp->tm_hour, tp->tm_min, tp->tm_sec, t.tv_usec);
+  fflush(stream);
+}
