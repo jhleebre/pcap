@@ -405,15 +405,30 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 
   f = flowTable_lookup(flowTable, pkt);
   if (f == NULL) {
-    f = flowTable_create_flow(flowTable, hdr, pkt);
-    if (f == NULL) {
-      fprintf(stderr, "flowTable_create_flow failure\n");
-      return -1;
+    /* create a new flow if the packet is a SYN or SYN-ACK packet */
+    if (tcp_hdr->syn) {
+      f = flowTable_create_flow(flowTable, hdr, pkt);
+      if (f == NULL) {
+	fprintf(stderr, "flowTable_create_flow failure\n");
+	return -1;
+      }
+      num_flow++;
     }
-    num_flow++;
+    /* ignore TCP packets without 3-way handshaking */
   }
   else {
-    flowTable_update_flow(flowTable, f, hdr, pkt);
+    if (tcp_hdr->syn == 1 && 
+	((tcp_hdr->ack == 0) || (tcp_hdr->ack == 1 && f->state != SYN))) {
+      f = flowTable_create_flow(flowTable, hdr, pkt);
+      if (f == NULL) {
+	fprintf(stderr, "flowTable_create_flow failure\n");
+	return -1;
+      }
+      num_flow++;
+    }
+    else {
+      flowTable_update_flow(flowTable, f, hdr, pkt);
+    }
   }
 
   if (f->num_byte > num_byte_max)

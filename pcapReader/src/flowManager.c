@@ -243,20 +243,15 @@ flowTable_create_flow(flowTable_t ft,
     assert(0);  /* Do I need more graceful error handling? */
   }
   //
-    f->sport = tcp_hdr->source;
-    f->dport = tcp_hdr->dest;
+  f->sport = tcp_hdr->source;
+  f->dport = tcp_hdr->dest;
   //
   f->ts[FIRST] = hdr->ts;
   f->ts[LAST]  = hdr->ts;
 
-  /*
-  if (tcphdr->syn)
-    f->state = tcphdr->ack ? SYNACK : SYN;
-  else if (tcphdr->rst)
-    f->state = RST;
-  else
-    f->state = tcphdr->fin ? UNCLEAR_FIN : UNCLEAR;
-  */
+  assert(tcp_hdr->syn);
+  f->state = tcp_hdr->ack ? SYNACK : SYN;
+
   f->num_byte = hdr->len;
   f->num_pkt  = 1;
 
@@ -274,9 +269,47 @@ flowTable_update_flow(flowTable_t ft, flow_t f,
 {
   uint32_t hash = flowTable_hash(pkt);
   flowQueue *fq = &ft->table[hash];
-  //struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
+  struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
 
   TAILQ_REMOVE(fq, f, node);
+
+  switch (f->state) {
+  case CLOSE:
+    assert(0);    
+    break;
+  case SYN:
+    if (tcp_hdr->syn && tcp_hdr->ack)
+      f->state = SYNACK;
+    else if (tcp_hdr->fin)
+      f->state = FIN;
+    else if (tcp_hdr->rst)
+      f->state = RST;
+    else
+      f->state = ESTABLISHED;
+    break;
+  case SYNACK:
+    if (tcp_hdr->fin)
+      f->state = FIN;
+    else if (tcp_hdr->rst)
+      f->state = RST;
+    else
+      f->state = ESTABLISHED;
+    break;
+  case ESTABLISHED:
+    if (tcp_hdr->fin)
+      f->state = FIN;
+    else if (tcp_hdr->rst)
+      f->state = RST;
+    break;
+  case FIN:
+    if (tcp_hdr->rst)
+      f->state = RST;
+    break;
+  case RST:
+    break;
+  default:
+    assert(0);
+  };
 
   f->ts[LAST] = hdr->ts;
   f->num_byte += hdr->len;

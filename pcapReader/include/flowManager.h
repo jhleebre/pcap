@@ -16,8 +16,7 @@
  */
 enum {FIRST, LAST};
 
-//enum FLOW_STATE {CLOSE, SYN, SYNACK, ESTABLISHED,
-//		 FIN1, FIN2, RST, UNCLEAR, UNCLEAR_FIN};
+enum FLOW_STATE {CLOSE, SYN, SYNACK, ESTABLISHED, FIN, RST};
 
 struct flow {
   struct in6_addr saddr;  /* source IP address of the first packet */
@@ -25,7 +24,7 @@ struct flow {
   __u16 sport;            /* source port number of the first packet */
   __u16 dport;            /* destination port number of the first packet */
   struct timeval ts[2];   /* the arriving times of the first & last packets */
-  //enum FLOW_STATE state;  /* TCP flow state */
+  enum FLOW_STATE state;  /* TCP flow state */
   uint64_t num_byte;      /* the number of bytes of the flow */
   uint64_t num_pkt;       /* the number of packets of the flow */
   TAILQ_ENTRY(flow) node; /* flowTable entry */
