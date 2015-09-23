@@ -90,7 +90,7 @@ static uint64_t duration_max = 0;
 
 #ifdef ENABLE_RAW_DATA_OUT
 /* output filestreams */
-static FILE *pkt_len_out; 	/* bytes of each packet */
+//static FILE *pkt_len_out; 	/* bytes of each packet */
 static FILE *syn_iat_out;	/* inter-arrival time of SYN packets */
 static FILE *flow_len_out;	/* flow duration and length in bytes */
 #endif
@@ -141,11 +141,13 @@ main(int argc, char *argv[])
   }
   
 #ifdef ENABLE_RAW_DATA_OUT
+  /*
   pkt_len_out = fopen("pkt_len.out", "w");
   if (pkt_len_out == NULL) {
     perror("fopen");
     goto main_end1;
   }
+  */
   syn_iat_out = fopen("syn_iat.out", "w");
   if (syn_iat_out == NULL) {
     perror("fopen");
@@ -236,8 +238,8 @@ main(int argc, char *argv[])
  main_end3:
   fclose(syn_iat_out);
  main_end2:
-  fclose(pkt_len_out);
- main_end1:
+  //fclose(pkt_len_out);
+  //main_end1:
 #endif
   /* destroy flow table */
   flowTable_destroy(flowTable);
@@ -346,7 +348,7 @@ signal_handler(int signum)
 #ifdef ENABLE_RAW_DATA_OUT
   fclose(flow_len_out);
   fclose(syn_iat_out);
-  fclose(pkt_len_out);
+  //fclose(pkt_len_out);
 #endif
 
   flowTable_destroy(flowTable);
@@ -374,8 +376,8 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
 
 #ifdef ENABLE_RAW_DATA_OUT
   /* print packet size to the file */
-  print_time(pkt_len_out, hdr->ts);
-  fprintf(pkt_len_out, " %"PRIu32"\n", hdr->len);
+  //print_time(pkt_len_out, hdr->ts);
+  //fprintf(pkt_len_out, " %"PRIu32"\n", hdr->len);
 #endif
 
   pkt_count(pkt, hdr->len);
@@ -415,6 +417,7 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
       num_flow++;
     }
     /* ignore TCP packets without 3-way handshaking */
+    return 0;
   }
   else {
     if (tcp_hdr->syn == 1 && 
