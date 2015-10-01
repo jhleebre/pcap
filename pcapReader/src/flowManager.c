@@ -95,7 +95,7 @@ flowTable_lookup(flowTable_t ft, const u_char *pkt)
 }
 
 /******************************************************************************
- * flowTable_lookup
+ * flowTable_hash
  */
 #define UPDATE_HASH(hash, key) {		\
     (hash) += (key);				\
