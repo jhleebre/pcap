@@ -1,3 +1,11 @@
+/* TCAM size simulation
+ *
+ * Jihyung Lee
+ * Oct 1, 2015
+ */
+/******************************************************************************
+ * Header files
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -23,10 +31,14 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <assert.h>
-
-#define NUM_DISK 30
-#define TCAM_LOOKUP_TABLE_SIZE 100000 	/* TCAM lookup table size */
-
+/******************************************************************************
+ * Configurations
+ */
+#define NUM_DISK 30		      /* the number of disks */
+#define TCAM_LOOKUP_TABLE_SIZE 100000 /* TCAM lookup table size */
+/******************************************************************************
+ * Abstract data types
+ */
 struct tcam_entry {
   struct in6_addr saddr;	/* source IP address */
   struct in6_addr daddr;	/* destination IP address */
@@ -40,16 +52,17 @@ struct tcam_entry {
   TAILQ_ENTRY(tcam_entry) link; /* FIFO linked list for timeout check */
 };
 typedef TAILQ_HEAD(table, tcam_entry) TEQ; /* TCAM entry queue */
-TEQ tcamtable[TCAM_LOOKUP_TABLE_SIZE];
-TEQ tcamfifo;
-
-int ttl;
-uint64_t num_tcam_entry = 0;
-uint64_t max_tcam_entry = 0;
-uint64_t num_query = 0;
-uint64_t prev_num_query = 0;
-time_t prev_t = 0;
-
+/******************************************************************************
+ * Global variables
+ */
+TEQ tcamtable[TCAM_LOOKUP_TABLE_SIZE]; /* TCAM entry lookup table */
+TEQ tcamfifo;			       /* TCAM entry FIFO queue */
+int ttl;			       /* TCAM entry time to live in us*/
+uint64_t num_tcam_entry = 0;	       /* the number of TCAM entries */
+uint64_t max_tcam_entry = 0;	       /* the maximum number of TCAM entries */
+uint64_t num_query = 0;		       /* the number of control messages */
+uint64_t prev_num_query = 0;	       /* the previous number of CMs */
+time_t prev_t = 0;		       /* the previous printing time */
 char *path[NUM_DISK] = {
   "/mnt/work_01/", "/mnt/work_02/", "/mnt/work_03/", "/mnt/work_04/",
   "/mnt/work_05/", "/mnt/work_06/", "/mnt/work_07/", "/mnt/work_08/",
@@ -58,23 +71,30 @@ char *path[NUM_DISK] = {
   "/mnt/work_17/", "/mnt/work_18/", "/mnt/work_19/", "/mnt/work_20/",
   "/mnt/work_21/", "/mnt/work_22/", "/mnt/work_23/", "/mnt/work_24/",
   "/mnt/work_25/", "/mnt/work_26/", "/mnt/work_27/", "/mnt/work_28/",
-  "/mnt/work_29/", "/mnt/work_30/",
-};
-
-pcap_t *handle[NUM_DISK] = {NULL};
-
+  "/mnt/work_29/", "/mnt/work_30/"}; /* PCAP file paths */
+pcap_t *handle[NUM_DISK] = {NULL};   /* PCAP file handlers */
+/******************************************************************************
+ * Function: get_ipv4_hdr
+ * - Return the IPv4 header of given Ethernet frame.
+ */
 inline struct iphdr *
 get_ipv4_hdr(const u_char *pkt)
 {
   return (struct iphdr *)(pkt + sizeof(struct ethhdr));
 }
-
+/******************************************************************************
+ * Function: get_ipv6_hdr
+ * - Return the IPv6 header of given Ethernet frame.
+ */
 inline struct ipv6hdr *
 get_ipv6_hdr(const u_char *pkt)
 {
   return (struct ipv6hdr *)(pkt + sizeof(struct ethhdr));
 }
-
+/******************************************************************************
+ * Function: get_tcp_hdr
+ * - Return the TCP header of given Ethernet frame.
+ */
 inline struct tcphdr *
 get_tcp_hdr(const u_char *pkt)
 {
@@ -94,7 +114,10 @@ get_tcp_hdr(const u_char *pkt)
     return NULL;
   }
 }
-
+/******************************************************************************
+ * Function: get_udp_hdr
+ * - Return the UDP header of given Ethernet frame.
+ */
 inline struct udphdr *
 get_udp_hdr(const u_char *pkt)
 {
@@ -114,13 +137,17 @@ get_udp_hdr(const u_char *pkt)
     return NULL;
   }
 }
-
+/******************************************************************************
+ * Function: get_hash
+ * - Return hash value of given Ethernet frame.
+ * - Use IP addresses and port numbers for hashing.
+ * - Return the same value for both cases of SRC->DEST and DEST->SRC.
+ */
 #define UPDATE_HASH(hash, key) {		\
     (hash) += (key);				\
     (hash) += ((hash) << 10);			\
     (hash) ^= ((hash) >> 6);			\
   }
-
 static inline uint32_t
 get_hash(const u_char *pkt)
 {
@@ -133,6 +160,7 @@ get_hash(const u_char *pkt)
   int i, j;
   char *key;
 
+  /* get the address values */
   if (ether_type == ETH_P_IP) {
     struct iphdr *ipv4_hdr = get_ipv4_hdr(pkt);
     addr[0] = (uint32_t)ipv4_hdr->saddr;
@@ -151,6 +179,7 @@ get_hash(const u_char *pkt)
     assert(0); /* Do I need more graceful error handling? */
   }
 
+  /* calculate hash value */
   for (i = 0; i < 2; i++) {
     key = (char *)&addr[i];
     for (j = 0; j < 4; j++)
@@ -160,6 +189,7 @@ get_hash(const u_char *pkt)
       UPDATE_HASH(hash[i], key[j]);
   }
 
+  /* finalize hash value */
   hash[0] += hash[1];
   hash[0] += (hash[0] << 3);
   hash[0] ^= (hash[0] >> 11);
@@ -167,22 +197,30 @@ get_hash(const u_char *pkt)
 
   return hash[0] % TCAM_LOOKUP_TABLE_SIZE;
 }
-
+/******************************************************************************
+ * Function: tcamtable_match
+ * - Check whether given Ethernet frame matches given TCAM entry.
+ */
 static inline bool
 tcamtable_match(struct tcam_entry *te, const u_char *pkt)
 {
   struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
   uint16_t ether_type = ntohs(ether_hdr->h_proto);
 
+  /* Ethernet type mismatch */
   if (ether_type != te->ether_type)
     return false;
   
   struct udphdr *udp_hdr = get_udp_hdr(pkt);
  
+  /* IPv4 case */
   if (ether_type == ETH_P_IP) {
     struct iphdr *ipv4_hdr = get_ipv4_hdr(pkt);
+
+    /* Transport layer protocol mismatch */
     if (te->protocol != ipv4_hdr->protocol)
       return false;
+
     return ((te->saddr.s6_addr32[0] == ipv4_hdr->saddr &&
              te->daddr.s6_addr32[0] == ipv4_hdr->daddr &&
              te->sport              == udp_hdr->source &&
@@ -192,8 +230,11 @@ tcamtable_match(struct tcam_entry *te, const u_char *pkt)
              te->sport              == udp_hdr->dest &&
              te->dport              == udp_hdr->source));
   }
+  /* IPv6 case */
   else if (ether_type == ETH_P_IPV6) {
     struct ipv6hdr *ipv6_hdr = get_ipv6_hdr(pkt);
+
+    /* Transport layer protocol mismatch */
     if (te->protocol != ipv6_hdr->nexthdr)
       return false;
 
@@ -222,13 +263,17 @@ tcamtable_match(struct tcam_entry *te, const u_char *pkt)
 
   return false;
 }
-
+/******************************************************************************
+ * Function: tcamtable_lookup
+ * - Find a TCAM entry that matches with given Ethernet frame.
+ */
 static inline struct tcam_entry *
 tcamtable_lookup(const u_char *pkt)
 {
   struct tcam_entry *te;
   uint32_t idx = get_hash(pkt);
 
+  /* traverse TCAM entries in the hash table bucket */
   TAILQ_FOREACH(te, &tcamtable[idx], node) {
     if (tcamtable_match(te, pkt))
       return te;
@@ -236,7 +281,11 @@ tcamtable_lookup(const u_char *pkt)
 
   return NULL;
 }
-
+/******************************************************************************
+ * Function: process_packet
+ * - Run TCAM size simulation for each packet arrival.
+ * - Ignore non IP packets and ICMP packets.
+ */
 static inline void
 process_packet(struct pcap_pkthdr *hdr, const u_char *pkt) 
 {
@@ -247,7 +296,7 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
   struct ipv6hdr *ipv6_hdr;
   struct tcam_entry *te;
 
-  /* remove old entries from the table */
+  /* TCAM entry timeout handling - remove old entries from the table */
   uint64_t ts = hdr->ts.tv_sec * 1000000 + hdr->ts.tv_usec;
   while ((te = TAILQ_FIRST(&tcamfifo))) {
     if (te->ts + ttl <= ts) {
@@ -261,6 +310,7 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
       break;
   }
 
+  /* get Transport layer procotol */
   if (ether_type == ETH_P_IP) {
     ipv4_hdr = get_ipv4_hdr(pkt);
     protocol = ipv4_hdr->protocol;
@@ -308,13 +358,17 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
     TAILQ_INSERT_HEAD(&tcamtable[te->idx], te, node);
     TAILQ_INSERT_TAIL(&tcamfifo, te, link);
 
+    /* update TCAM entry counter */
     num_tcam_entry++;    
     if (max_tcam_entry < num_tcam_entry)
       max_tcam_entry = num_tcam_entry;
     num_query++;
   }
 }
-
+/******************************************************************************
+ * Function: signal_handler
+ * - Close opened files, free allocated memory and finish the program.
+ */
 static void
 signal_handler(int signum) 
 {
@@ -324,10 +378,12 @@ signal_handler(int signum)
   if (signum != SIGINT)
     exit(1);
 
+  /* close opened files */
   for (i = 0; i < NUM_DISK; i++)
     if (handle[i])
       pcap_close(handle[i]);
 
+  /* free allocated memory */
   while ((te = TAILQ_FIRST(&tcamfifo))) {
     TAILQ_REMOVE(&tcamfifo, te, link);
     free(te);
@@ -335,7 +391,10 @@ signal_handler(int signum)
 
   exit(0);
 }
-
+/******************************************************************************
+ * Function: find_oldest_pkt
+ * - Find the oldest packet and return the index of it.
+ */
 static inline int
 find_oldest_pkt(struct pcap_pkthdr hdr[], const u_char *pkt[]) 
 {
@@ -344,13 +403,18 @@ find_oldest_pkt(struct pcap_pkthdr hdr[], const u_char *pkt[])
   int i;
 
   for (i = 0; i < NUM_DISK; i++) {
+    /* no more packets to see in this disk - skip */
     if (pkt[i] == NULL)
       continue;
+
+    /* the first packet case */
     if (idx == -1) {
       idx = i;
       t1 = hdr[i].ts.tv_sec * 1000000 + hdr[i].ts.tv_usec;
       continue;
     }
+
+    /* compare two arrival times and find the older one */
     t2 = hdr[i].ts.tv_sec * 1000000 + hdr[i].ts.tv_usec;
     if (t1 > t2) {
       idx = i;
@@ -358,9 +422,12 @@ find_oldest_pkt(struct pcap_pkthdr hdr[], const u_char *pkt[])
     }
   }
 
+  /* return the index of the oldest one */
   return idx;
 }
-
+/******************************************************************************
+ * Function: main
+ */
 int
 main(int argc, char *argv[])
 {
