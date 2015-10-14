@@ -5,7 +5,7 @@
 #include <inttypes.h>
 #include <assert.h>
 
-#define MAX_IAT 30000
+#define MAX_IAT 300000
 
 int
 main(int argc, char *argv[])
