@@ -41,12 +41,14 @@ flowTable_create(void)
   flowTable_t ft;
   int i;
 
+  /* allocate memory for the new flow table */
   ft = (flowTable_t)malloc(sizeof(struct flowTable));
   if (ft == NULL) {
     perror("malloc");
     return NULL;
   }
 
+  /* initialize each slot of the flow table */
   for (i = 0; i < FLOW_TABLE_SIZE; i++)
     TAILQ_INIT(&ft->table[i]);
 
@@ -63,6 +65,7 @@ flowTable_destroy(flowTable_t ft)
   flowQueue *fq;
   flow_t f;
 
+  /* free every flow entry */
   for (i = 0; i < FLOW_TABLE_SIZE; i++) {
     fq = &ft->table[i];
     while ((f = TAILQ_FIRST(fq))) {
@@ -84,6 +87,7 @@ flowTable_lookup(flowTable_t ft, const u_char *pkt)
   flow_t f;
   uint32_t hash = flowTable_hash(pkt);
 
+  /* check the flow entries in the slot */
   fq = &ft->table[hash];
   TAILQ_FOREACH(f, fq, node) {
     if (flowTable_match(f, pkt)) {
@@ -116,6 +120,7 @@ flowTable_hash(const u_char *pkt)
   int i, j;
   char *key;
 
+  /* get the IP address values from the packet */
   if (ether_type == ETH_P_IP) {
     struct iphdr *ipv4_hdr = get_ipv4_hdr(pkt);
     addr[0] = (uint32_t)ipv4_hdr->saddr;
@@ -134,6 +139,7 @@ flowTable_hash(const u_char *pkt)
     assert(0); /* Do I need more graceful error handling? */
   }
 
+  /* get the hash value using the IP addresses and port numbers */
   for (i = 0; i < 2; i++) {
     key = (char *)&addr[i];
     for (j = 0; j < 4; j++)
@@ -145,6 +151,7 @@ flowTable_hash(const u_char *pkt)
     //
   }
 
+  /* finalize the hash value */
   hash[0] += hash[1];
   hash[0] += (hash[0] << 3);
   hash[0] ^= (hash[0] >> 11);
@@ -162,11 +169,13 @@ flowTable_match(flow_t f, const u_char *pkt)
   struct ethhdr *ether_hdr = (struct ethhdr *)pkt;
   uint16_t ether_type = ntohs(ether_hdr->h_proto);
 
+  /* check L3 protocol */
   if (ether_type != f->ether_type)
     return false;
   //
-    struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
+  struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
   //
+  /* check the IP addresses and port numbers */
   if (ether_type == ETH_P_IP) {
     struct iphdr *ipv4_hdr = get_ipv4_hdr(pkt);
     return ((f->saddr.s6_addr32[0] == ipv4_hdr->saddr &&
@@ -221,14 +230,17 @@ flowTable_create_flow(flowTable_t ft,
   struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
   //
 
+  /* allocate memory for the new flow */
   f = (flow_t)malloc(sizeof(struct flow));
   if (f == NULL) {
     perror("malloc");
     return NULL;
   }
   
+  /* set L3 protocol */
   f->ether_type = ntohs(ether_hdr->h_proto);
 
+  /* set IP addresses */
   if (f->ether_type == ETH_P_IP) {
     struct iphdr *ipv4_hdr = get_ipv4_hdr(pkt);
     f->saddr.s6_addr32[0] = ipv4_hdr->saddr;
@@ -242,19 +254,27 @@ flowTable_create_flow(flowTable_t ft,
   else {
     assert(0);  /* Do I need more graceful error handling? */
   }
+
+  /* set port numbers */
   //
   f->sport = tcp_hdr->source;
   f->dport = tcp_hdr->dest;
   //
+
+  /* set time stamps */
   f->ts[FIRST] = hdr->ts;
   f->ts[LAST]  = hdr->ts;
 
   assert(tcp_hdr->syn);
+
+  /* set TCP state */
   f->state = tcp_hdr->ack ? SYNACK : SYN;
 
+  /* set counters */
   f->num_byte = hdr->len;
   f->num_pkt  = 1;
 
+  /* insert to the flow table */
   TAILQ_INSERT_HEAD(fq, f, node);
   
   return f;
@@ -271,8 +291,11 @@ flowTable_update_flow(flowTable_t ft, flow_t f,
   flowQueue *fq = &ft->table[hash];
   struct tcphdr *tcp_hdr = get_tcp_hdr(pkt);
 
+  /* move the flow to the head for efficiency */
   TAILQ_REMOVE(fq, f, node);
+  TAILQ_INSERT_HEAD(fq, f, node);
 
+  /* update TCP state */
   switch (f->state) {
   case CLOSE:
     assert(0);    
@@ -314,6 +337,4 @@ flowTable_update_flow(flowTable_t ft, flow_t f,
   f->ts[LAST] = hdr->ts;
   f->num_byte += hdr->len;
   f->num_pkt++;
-
-  TAILQ_INSERT_HEAD(fq, f, node);
 }

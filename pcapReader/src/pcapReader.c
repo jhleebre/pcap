@@ -91,7 +91,7 @@ static uint64_t duration_max = 0;
 #ifdef ENABLE_RAW_DATA_OUT
 /* output filestreams */
 //static FILE *pkt_len_out; 	/* bytes of each packet */
-static FILE *syn_iat_out;	/* inter-arrival time of SYN packets */
+//static FILE *syn_iat_out;	/* inter-arrival time of SYN packets */
 static FILE *flow_len_out;	/* flow duration and length in bytes */
 #endif
 
@@ -148,11 +148,13 @@ main(int argc, char *argv[])
     goto main_end1;
   }
   */
+  /*
   syn_iat_out = fopen("syn_iat.out", "w");
   if (syn_iat_out == NULL) {
     perror("fopen");
     goto main_end2;
   }
+  */
   flow_len_out = fopen("flow_len.out", "w");
   if (flow_len_out == NULL) {
     perror("fopen");
@@ -236,8 +238,8 @@ main(int argc, char *argv[])
 #ifdef ENABLE_RAW_DATA_OUT
   fclose(flow_len_out);
  main_end3:
-  fclose(syn_iat_out);
- main_end2:
+  //fclose(syn_iat_out);
+  //main_end2:
   //fclose(pkt_len_out);
   //main_end1:
 #endif
@@ -278,6 +280,7 @@ print_top_n_ports(void)
   int port_id;
   int i;
 
+  /* sort the ports according to the number of packets */
   for (port_id = 0; port_id < 65536; port_id++) {
     if (sport_pkt[TOP_N].cnt < sportPktCnt[port_id]) {
       sport_pkt[TOP_N].port = port_id;
@@ -304,6 +307,7 @@ print_top_n_ports(void)
     }
   }
 
+  /* print top N ports */
   printf("----------------------------------------------------------------\n");
   for (i = 0; i < TOP_N; i++)
     printf("top %2d src port in # of pkts : %5"PRIu16" %12"PRIu64" pkts\n",
@@ -347,7 +351,7 @@ signal_handler(int signum)
 
 #ifdef ENABLE_RAW_DATA_OUT
   fclose(flow_len_out);
-  fclose(syn_iat_out);
+  //fclose(syn_iat_out);
   //fclose(pkt_len_out);
 #endif
 
@@ -396,10 +400,12 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
     else {
 #ifdef ENABLE_RAW_DATA_OUT
       /* print syn inter-arrival time to the file */
+      /*
       uint32_t syn_iat = (hdr->ts.tv_sec * 1000000 + hdr->ts.tv_usec) - 
 	(last_syn_ts.tv_sec * 1000000 + last_syn_ts.tv_usec);
       print_time(syn_iat_out, hdr->ts);
       fprintf(syn_iat_out, " %"PRIu32"\n", syn_iat);
+      */
 #endif
     }
     last_syn_ts = hdr->ts;
@@ -420,6 +426,7 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
     return 0;
   }
   else {
+    /* SYN or SYN-ACK packet arrival for an existing flow - create a new flow*/
     if (tcp_hdr->syn == 1 && 
 	((tcp_hdr->ack == 0) || (tcp_hdr->ack == 1 && f->state != SYN))) {
       f = flowTable_create_flow(flowTable, hdr, pkt);
@@ -430,6 +437,7 @@ process_packet(struct pcap_pkthdr *hdr, const u_char *pkt)
       num_flow++;
     }
     else {
+      /* update the flow */
       flowTable_update_flow(flowTable, f, hdr, pkt);
     }
   }
