@@ -64,6 +64,7 @@ static uint64_t prev_pkt = 0;
 struct rte_eth_stats prev_stats[RTE_MAX_ETHPORTS];
 static struct timeval init_ts;
 static struct timeval prev_ts;
+/* key for symmetric RSS hashing */
 static uint8_t key[] = {
   0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
   0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
@@ -277,7 +278,7 @@ pcapWriter_parse_args(char *app_name, int argc, char **argv)
 
   while ((opt = getopt(argc, argv, "d:t:b:s:p:")) != EOF) {
     switch (opt) {
-    case 'd':
+    case 'd':			/* the number of hard disks for each lcore */
       ret = atoi(optarg);
       if (ret < 0 || ret > NUM_HDD_PER_LCORE_MAX) {
 	fprintf(stderr, "invalid number of hard disks per lcore: %d\n", ret);
@@ -287,7 +288,7 @@ pcapWriter_parse_args(char *app_name, int argc, char **argv)
       printf("The number of hard disks per lcore: %d\n", ret);
       num_hdd_per_lcore = ret;
       break;
-    case 't':
+    case 't':			/* status print period */
       ret = atoi(optarg);
       if (ret < 0 || ret > PRINT_PERIOD_MAX) {
 	fprintf(stderr, "invalid print period: %d\n", ret);
@@ -297,7 +298,7 @@ pcapWriter_parse_args(char *app_name, int argc, char **argv)
       printf("The print period: %d\n", ret);
       print_period = ret;
       break;
-    case 'b':
+    case 'b':			/* the number of writer buffers */
       ret = atoi(optarg);
       if (ret < NUM_WBUF_MIN || ret > NUM_WBUF_MAX) {
 	fprintf(stderr, "invalid number of writer buffers: %d\n", ret);
@@ -307,7 +308,7 @@ pcapWriter_parse_args(char *app_name, int argc, char **argv)
       printf("The number of writer buffers: %d\n", ret);
       num_wbuf = ret;
       break;
-    case 's':
+    case 's':			/* the size of writer buffers */
       retll = atoll(optarg);
       if (retll < SIZE_WBUF_MIN || retll > SIZE_WBUF_MAX ||
 	  !is_multiple_of_512(retll)) {
@@ -318,7 +319,7 @@ pcapWriter_parse_args(char *app_name, int argc, char **argv)
       printf("The size of the writer buffer: %lld\n", retll);
       size_wbuf = retll;
       break;
-    case 'p':
+    case 'p':			/* the size of pcap files */
       retll = atoll(optarg);
       if (retll < SIZE_PCAP_FILE_MIN || retll > SIZE_PCAP_FILE_MAX) {
 	fprintf(stderr, "invalid pcap file size: %lld\n", retll);
@@ -385,15 +386,18 @@ pcapWriter_print_status(void)
 
   gettimeofday(&curr_ts, NULL);
 
+  /* collect the status */
   for (lcore_id = 1; lcore_id < num_lcore; lcore_id++) {
     curr_byte += eng_ctx[lcore_id]->num_byte;
     curr_pkt  += eng_ctx[lcore_id]->num_pkt;
   }  
 
+  /* calculate the difference */
   diff_byte = curr_byte - prev_byte;
   diff_pkt  = curr_pkt  - prev_pkt;
   tot_byte = diff_byte + diff_pkt * 24;
 
+  /* calculate the time */
   elapsed = get_time_diff_sec(&curr_ts, &prev_ts);
   uptime  = get_time_diff_sec(&curr_ts, &init_ts);
 
@@ -404,6 +408,7 @@ pcapWriter_print_status(void)
 
   printf("-------------------------------------------------------------------------------\n");
 
+  /* print the status */
   printf("Uptime     : %2d:%2d:%2d:%2d\n", day, hour, min, sec);
   //printf("%5.2f Gbps\n", gbps(diff_byte, elapsed));
   printf("Bytes/sec  : %5.2f (%5.2f) Gbps\n",

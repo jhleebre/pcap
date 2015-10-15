@@ -125,15 +125,17 @@ engine_main(__attribute__((unused)) void *dummy)
     for (port_id = 0; port_id < num_port; port_id++) {
       num_rx = rte_eth_rx_burst((uint8_t)port_id, (uint16_t)lcore_id - 1,
 				pkt_burst, MAX_PKT_BURST);
-
+      /* skip if there are no packets */
       if (num_rx == 0)
 	continue;
 
+      /* get the arrival time */
       struct timeval t;
       gettimeofday(&t, NULL);
       hdr.sec  = t.tv_sec;
       hdr.usec = t.tv_usec;
     
+      /* process packets one by one */
       for (mbuf_id = 0; mbuf_id < num_rx; mbuf_id++) {
 	m = pkt_burst[mbuf_id];
 	rte_prefetch0(rte_pktmbuf_mtod(m, void *));
@@ -147,6 +149,7 @@ engine_main(__attribute__((unused)) void *dummy)
 	ectx.num_byte += hdr.len;
 	ectx.num_pkt++;
 	
+	/* free the packet after processing */
 	rte_pktmbuf_free(m);
       }
     }
@@ -226,6 +229,7 @@ engine_clear(engine_context_t ectx)
   for (writer_id = 0; writer_id < num_hdd_per_lcore; writer_id++) {
     printf("[ENGINE-%02u] terminate writer-%d...\n", ectx->lcore_id,
 	   (ectx->lcore_id - 1) * num_hdd_per_lcore + writer_id + 1);
+    /* send signal to the writer to terminate it */
     if (write(ectx->wrt[writer_id].sockd[ENGINE], &sig, sizeof(int))
 	!= sizeof(int))
       rte_exit(EXIT_FAILURE, "write\n");
@@ -297,11 +301,12 @@ engine_get_writer(u_char *eth_frame)
   uint32_t ret = 5381;
   int i;
 
+  /* no need to select a writer (zero or one writer for each lcore) */
   if (num_hdd_per_lcore < 2)
     return 0;
 
+  /* get the L3 protocol */
   ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
-
   if (ether_type == ETHER_TYPE_VLAN) {
     vlanhdr = (struct vlan_hdr *)(eth_frame + offset);
     ether_type = rte_be_to_cpu_16(vlanhdr->eth_proto);
@@ -354,6 +359,7 @@ engine_get_wbuf(writer_context_t wctx, int len)
 			  engine_get_next_wbuf(wctx));
   int sig = SIG_WRT_CLOSE;
 
+  /* no need to write something */
   if (len == 0)
     return wbuf;
 
