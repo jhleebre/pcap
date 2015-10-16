@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # TARGET HOURES TO ANALYZE
-TIME=22
+TIME=05
 
 # SET INPUT FILES
 rm -rf input

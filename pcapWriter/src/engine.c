@@ -138,7 +138,7 @@ engine_main(__attribute__((unused)) void *dummy)
       /* process packets one by one */
       for (mbuf_id = 0; mbuf_id < num_rx; mbuf_id++) {
 	m = pkt_burst[mbuf_id];
-	rte_prefetch0(rte_pktmbuf_mtod(m, void *));
+	rte_prefetch0(rte_pktmbuf_mtod(m, void *)); /* XXX: need to optimize prefetching more*/
 	hdr.len = rte_pktmbuf_pkt_len(m);
 	hdr.caplen = hdr.len;
 	

@@ -288,7 +288,7 @@ writer_open_pcap_file(writer_context_t wctx)
 
   /* replace old file if there are no space to write any more */
   if (wctx->file_id >= NUM_PCAP_PER_DISK_MAX) {
-    return -1;
+    return -1;			/* disable old file overwriting when this disk is full */
 
     char old_file_name[128];
     sprintf(old_file_name, "/mnt/work_%02d/dump%05d.pcap",

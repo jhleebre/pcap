@@ -17,7 +17,7 @@
 #include <sys/queue.h>
 #include <sys/time.h>
 #include <errno.h>
-#include <pthread.h>
+#include <pthread.h>		/* POSIX thread library */
 
 #include <rte_common.h>
 #include <rte_memory.h>
@@ -48,7 +48,7 @@ uint16_t num_wbuf = NUM_WBUF_DEFAULT;
 uint64_t size_wbuf = SIZE_WBUF_DEFAULT;
 uint64_t size_pcap = SIZE_PCAP_FILE_DEFAULT;
 engine_context_t eng_ctx[RTE_MAX_LCORE];
-pthread_mutex_t main_mutex;
+pthread_mutex_t main_mutex;	/* Lock for synchronization */
 
 /*****************************************************************************
  * Static variables
@@ -85,7 +85,7 @@ static const struct rte_eth_conf port_conf = {
     .rss_conf = {
       .rss_key = key,
       .rss_key_len = 40,
-      .rss_hf = ETH_RSS_IP,
+      .rss_hf = ETH_RSS_IP,	/* XXX: need to check uniform distribution of NON-TCP packets */
     },
   },
   .txmode = {
@@ -173,7 +173,7 @@ pcapWriter_init(int argc, char **argv)
   char *app_name = argv[0];
 
   /* init EAL */
-  ret = rte_eal_init(argc, argv);
+  ret = rte_eal_init(argc, argv); /* create lcores */
   if (ret < 0)
     rte_exit(EXIT_FAILURE, "Invalid EAL arguments\n");
   argc -= ret;

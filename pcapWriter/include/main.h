@@ -11,7 +11,7 @@
 #define MBUF_CACHE_SIZE          32
 
 /* disk configurations */
-#define NUM_HDD_PER_LCORE_DEFAULT 2
+#define NUM_HDD_PER_LCORE_DEFAULT 2 /* zero for sniffing mode */
 #define NUM_HDD_PER_LCORE_MAX     32
 #define NUM_PCAP_PER_DISK_MAX     1500
 
@@ -21,7 +21,7 @@
 #define SIZE_PCAP_FILE_MAX     17179869184ll /* 16 GiB */
 
 /* statistics print configurations */
-#define PRINT_PERIOD_DEFAULT 1
+#define PRINT_PERIOD_DEFAULT 1	/* 0 for quite mode (no printing) */
 #define PRINT_PERIOD_MAX     86400
 
 /* writer buffer configurations */
